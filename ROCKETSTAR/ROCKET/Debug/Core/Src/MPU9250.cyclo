@@ -1,0 +1,10 @@
+../Core/Src/MPU9250.c:14:9:MPU_begin	3
+../Core/Src/MPU9250.c:49:6:MPU_REG_WRITE	1
+../Core/Src/MPU9250.c:63:6:MPU_REG_READ	1
+../Core/Src/MPU9250.c:75:6:MPU_CS	1
+../Core/Src/MPU9250.c:84:6:MPU_writeAccFullScaleRange	5
+../Core/Src/MPU9250.c:125:6:MPU_writeGyroFullScaleRange	5
+../Core/Src/MPU9250.c:165:6:MPU_readRawData	1
+../Core/Src/MPU9250.c:187:6:MPU_calibrateGyro	3
+../Core/Src/MPU9250.c:219:6:MPU_readProcessedData	1
+../Core/Src/MPU9250.c:243:6:MPU_calcAttitude	1
