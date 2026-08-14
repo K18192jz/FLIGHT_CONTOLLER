@@ -30,6 +30,8 @@
 
 
 #include "MPU9250.h"
+#include "BMP280.h"
+
 
 /* USER CODE END Includes */
 
@@ -74,6 +76,7 @@ static void MX_SPI2_Init(void);
 
 
 MPU9250_t MPU9250;
+bmp280_t BMP;
 
 
 
@@ -114,6 +117,14 @@ int main(void)
 	  MPU9250.settings.CS_PORT = GPIOB;
 	  MPU9250.attitude.tau = 0.98;
 	  MPU9250.attitude.dt = 0.004;
+
+
+
+
+	  BMP.hspi = &hspi2;
+	  BMP.cs_port = GPIOC;
+	  BMP.cs_pin = GPIO_PIN_15;
+	  BMP.comm_mode = BMP280_MODE_SPI;
 
 
   /* USER CODE END 1 */
@@ -158,8 +169,11 @@ HAL_Delay(1000);
 	  //while (1){}
   }
 
-  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_RESET);
 
+  bmp280_init(&BMP);
+
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET);
 
 
   MPU_calibrateGyro(&hspi2, &MPU9250, 1500);
@@ -188,6 +202,19 @@ HAL_Delay(1000);
 
 
 	  USB_Printf("%d.%d,%d.%d,%d.%d\n\r",roll/10, rollDecimal, pitch/10, pitchDecimal, yaw/10, yawDecimal);
+
+
+
+	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_RESET);
+	  int32_t temp_raw, press_raw;
+	  bmp280_read_raw(&BMP, &temp_raw, &press_raw);
+	  float temperature = bmp280_compensate_temperature(&BMP, temp_raw);
+	  float pressure = bmp280_compensate_pressure(&BMP, press_raw);
+
+	  USB_Printf("%f.%f\n\r",temperature, pressure);
+
+	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET);
+
 
 
 	  HAL_Delay(1000);

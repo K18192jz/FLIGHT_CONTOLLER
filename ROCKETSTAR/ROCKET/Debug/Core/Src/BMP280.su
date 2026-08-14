@@ -1,0 +1,10 @@
+../Core/Src/BMP280.c:34:26:bmp280_write_register	24	static
+../Core/Src/BMP280.c:44:26:bmp280_read_registers	32	static
+../Core/Src/BMP280.c:60:26:bmp280_read_calibration_data	48	static
+../Core/Src/BMP280.c:103:19:bmp280_init	32	static
+../Core/Src/BMP280.c:135:19:bmp280_soft_reset	24	static
+../Core/Src/BMP280.c:142:19:bmp280_set_configuration	24	static
+../Core/Src/BMP280.c:169:19:bmp280_read_raw	32	static
+../Core/Src/BMP280.c:185:7:bmp280_compensate_temperature	48	static
+../Core/Src/BMP280.c:199:7:bmp280_compensate_pressure	40	static
+../Core/Src/BMP280.c:218:7:bmp280_calculate_altitude	16	static
