@@ -17,6 +17,8 @@ uint8_t MPU_begin(SPI_HandleTypeDef *SPIx, MPU9250_t *pMPU9250)
     uint8_t check, addr, val;
 
     // Confirm device -- accept either WHO_AM_I answer an MPU6500 may return
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+
     MPU_REG_READ(SPIx, pMPU9250, WHO_AM_I, &check, 1);
     if (check == WHO_AM_I_6500_ANS_A || check == WHO_AM_I_6500_ANS_B)
     {
@@ -33,10 +35,12 @@ uint8_t MPU_begin(SPI_HandleTypeDef *SPIx, MPU9250_t *pMPU9250)
         // Set the full scale ranges
         MPU_writeAccFullScaleRange(SPIx, pMPU9250, pMPU9250->settings.aFullScaleRange);
         MPU_writeGyroFullScaleRange(SPIx, pMPU9250, pMPU9250->settings.gFullScaleRange);
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
         return 1;
     }
     else
     {
+    	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
         return 0;
     }
 }
@@ -48,10 +52,10 @@ uint8_t MPU_begin(SPI_HandleTypeDef *SPIx, MPU9250_t *pMPU9250)
 /// @param pVal Pointer of value to write to given address
 void MPU_REG_WRITE(SPI_HandleTypeDef *SPIx, MPU9250_t *pMPU9250, uint8_t *pAddr, uint8_t *pVal)
 {
-    MPU_CS(pMPU9250, CS_SELECT);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
     HAL_SPI_Transmit(SPIx, pAddr, 1, SPI_TIMOUT_MS);
     HAL_SPI_Transmit(SPIx, pVal, 1, SPI_TIMOUT_MS);
-    MPU_CS(pMPU9250, CS_DESELECT);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
 }
 
 /// @brief Read a specific registry address
@@ -62,11 +66,11 @@ void MPU_REG_WRITE(SPI_HandleTypeDef *SPIx, MPU9250_t *pMPU9250, uint8_t *pAddr,
 /// @param RxSize Size of data buffer
 void MPU_REG_READ(SPI_HandleTypeDef *SPIx, MPU9250_t *pMPU9250, uint8_t addr, uint8_t *pRxData, uint16_t RxSize)
 {
-    MPU_CS(pMPU9250, CS_SELECT);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
     uint8_t writeAddr = addr | READWRITE;
     HAL_SPI_Transmit(SPIx, &writeAddr, 1, SPI_TIMOUT_MS);
     HAL_SPI_Receive(SPIx, pRxData, RxSize, SPI_TIMOUT_MS);
-    MPU_CS(pMPU9250, CS_DESELECT);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
 }
 
 /// @brief Set CS state to either start or end transmissions

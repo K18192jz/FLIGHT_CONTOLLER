@@ -33,8 +33,8 @@
 #define ACCEL_CONFIG2     0x1D
 #define ACCEL_XOUT_H      0x3B
 #define READWRITE         0x80
-#define CS_SELECT         0
-#define CS_DESELECT       1
+#define CS_SELECT         GPIO_PIN_RESET
+#define CS_DESELECT       GPIO_PIN_SET
 #define SPI_TIMOUT_MS     1000
 
 // Full scale ranges

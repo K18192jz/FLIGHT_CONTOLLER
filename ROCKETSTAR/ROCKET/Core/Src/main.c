@@ -145,6 +145,10 @@ int main(void)
 HAL_Delay(1000);
 //USB_Printf("ERROR\n\r");
 
+
+
+
+
   if (MPU_begin(&hspi2, &MPU9250) != 1)
   {
     //sprintf((char *)serialBuf, "ERROR!\r\n");
@@ -153,6 +157,9 @@ HAL_Delay(1000);
 	  USB_Printf("ERROR\n\r");
 	  //while (1){}
   }
+
+  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+
 
 
   MPU_calibrateGyro(&hspi2, &MPU9250, 1500);
@@ -295,10 +302,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13|GPIO_PIN_15, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
 
   /*Configure GPIO pins : PC13 PC15 */
   GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_15;
