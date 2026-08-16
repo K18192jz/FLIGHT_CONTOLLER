@@ -76,7 +76,7 @@ static void MX_SPI2_Init(void);
 
 
 MPU9250_t MPU9250;
-bmp280_t BMP;
+static BMP280_t bmp280;
 
 
 
@@ -121,10 +121,7 @@ int main(void)
 
 
 
-	  BMP.hspi = &hspi2;
-	  BMP.cs_port = GPIOC;
-	  BMP.cs_pin = GPIO_PIN_15;
-	  BMP.comm_mode = BMP280_MODE_SPI;
+
 
 
   /* USER CODE END 1 */
@@ -171,7 +168,29 @@ HAL_Delay(1000);
 
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_RESET);
 
-  bmp280_init(&BMP);
+
+
+
+  BMP280_Attach(&bmp280, &hspi2, GPIOC, GPIO_PIN_15);
+  BMP280_Status_t st = BMP280_Init(&bmp280,
+                                    BMP280_OSRS_X2,          /* temp oversampling */
+                                    BMP280_OSRS_X16,         /* pressure oversampling */
+                                    BMP280_MODE_NORMAL,      /* free-running */
+                                    BMP280_STANDBY_62_5MS,   /* time between samples */
+                                    BMP280_FILTER_4);        /* IIR filter */
+
+
+
+  if (st != BMP280_OK) {
+      /* Common causes: wrong CS pin/port, SPI mode not 0/3, MISO/MOSI
+       * swapped, or CSB tied to GND (forces I2C mode on the chip) instead
+       * of being driven by this GPIO. */
+	  USB_Printf("BMP280 init failed, err=%d\r\n", (int)st);
+      //Error_Handler();
+  }
+
+  USB_Printf("BMP280 ready\r\n");
+
 
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET);
 
@@ -206,12 +225,24 @@ HAL_Delay(1000);
 
 
 	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_RESET);
-	  int32_t temp_raw, press_raw;
-	  bmp280_read_raw(&BMP, &temp_raw, &press_raw);
-	  float temperature = bmp280_compensate_temperature(&BMP, temp_raw);
-	  float pressure = bmp280_compensate_pressure(&BMP, press_raw);
 
-	  USB_Printf("%f.%f\n\r",temperature, pressure);
+
+
+
+	  int32_t t100;
+	  uint32_t p256;
+
+	  if (BMP280_ReadCompensated(&bmp280, &t100, &p256) == BMP280_OK) {
+	      USB_Printf("T = %ld.%02ld C   P = %lu.%02lu hPa\r\n",
+	                 t100 / 100, abs((int)(t100 % 100)),
+	                 p256 / 256, ((p256 % 256) * 100) / 256);
+	  } else {
+	      USB_Printf("BMP280 read error\r\n");
+	  }
+
+	    HAL_Delay(1000);
+
+
 
 	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET);
 

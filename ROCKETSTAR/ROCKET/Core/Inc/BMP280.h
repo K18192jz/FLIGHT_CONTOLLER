@@ -1,145 +1,170 @@
 /*
  * BMP280.h
  *
- *  Created on: Sep 21, 2024
- *      Author: medam
+ * BMP280 pressure/temperature sensor driver - SPI (4-wire), STM32F411 + HAL
+ *
+ * Wiring:
+ *   SCK  -> SPIx_SCK
+ *   SDI  -> SPIx_MOSI   (sensor's SDI pin)
+ *   SDO  -> SPIx_MISO   (sensor's SDO pin)
+ *   CSB  -> any GPIO, driven manually as chip select (active low)
+ *
+ * Notes on the BMP280 SPI protocol:
+ *   - Mode 0 (CPOL=0, CPHA=0) or Mode 3 (CPOL=1, CPHA=1) both work.
+ *   - Max SPI clock is 10 MHz.
+ *   - Register read:  first byte = (addr | 0x80), then clock out dummy
+ *     bytes to receive the data.
+ *   - Register write: first byte = (addr & 0x7F), second byte = data.
+ *     Only single-byte writes are supported by the chip.
  */
 
-#ifndef INC_BMP280_H_
-#define INC_BMP280_H_
+#ifndef BMP280_SPI_H
+#define BMP280_SPI_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #include "stm32f4xx_hal.h"
+#include <stdint.h>
+#include <stdbool.h>
 
+/* ---- Register map ---------------------------------------------------- */
+#define BMP280_REG_CALIB_START   0x88u   /* 0x88 - 0xA1, 26 bytes */
+#define BMP280_REG_ID            0xD0u
+#define BMP280_REG_RESET         0xE0u
+#define BMP280_REG_STATUS        0xF3u
+#define BMP280_REG_CTRL_MEAS     0xF4u
+#define BMP280_REG_CONFIG        0xF5u
+#define BMP280_REG_PRESS_MSB     0xF7u
+#define BMP280_REG_PRESS_LSB     0xF8u
+#define BMP280_REG_PRESS_XLSB    0xF9u
+#define BMP280_REG_TEMP_MSB      0xFAu
+#define BMP280_REG_TEMP_LSB      0xFBu
+#define BMP280_REG_TEMP_XLSB     0xFCu
 
-// Communication Modes
+#define BMP280_CHIP_ID           0x58u   /* expected value in ID reg */
+#define BMP280_SOFT_RESET_CMD    0xB6u
+
+/* ---- ctrl_meas: oversampling + power mode ----------------------------- */
 typedef enum {
-    BMP280_MODE_I2C,
-    BMP280_MODE_SPI
-} bmp280_mode_t;
+    BMP280_OSRS_SKIP = 0x0,
+    BMP280_OSRS_X1   = 0x1,
+    BMP280_OSRS_X2   = 0x2,
+    BMP280_OSRS_X4   = 0x3,
+    BMP280_OSRS_X8   = 0x4,
+    BMP280_OSRS_X16  = 0x5,
+} BMP280_Oversampling_t;
 
-// Sensor Operating Modes
 typedef enum {
-    BMP280_MODE_SLEEP = 0x00,
-    BMP280_MODE_FORCED = 0x01,
-    BMP280_MODE_NORMAL = 0x03
-} bmp280_operating_mode_t;
+    BMP280_MODE_SLEEP  = 0x0,
+    BMP280_MODE_FORCED = 0x1,   /* 0x2 also maps to forced */
+    BMP280_MODE_NORMAL = 0x3,
+} BMP280_Mode_t;
 
-// Oversampling Settings
+/* ---- config: standby time + IIR filter -------------------------------- */
 typedef enum {
-    BMP280_OSAMPLE_1 = 0x01,
-    BMP280_OSAMPLE_2 = 0x02,
-    BMP280_OSAMPLE_4 = 0x03,
-    BMP280_OSAMPLE_8 = 0x04,
-    BMP280_OSAMPLE_16 = 0x05
-} bmp280_oversampling_t;
+    BMP280_STANDBY_0_5MS  = 0x0,
+    BMP280_STANDBY_62_5MS = 0x1,
+    BMP280_STANDBY_125MS  = 0x2,
+    BMP280_STANDBY_250MS  = 0x3,
+    BMP280_STANDBY_500MS  = 0x4,
+    BMP280_STANDBY_1000MS = 0x5,
+    BMP280_STANDBY_2000MS = 0x6,
+    BMP280_STANDBY_4000MS = 0x7,
+} BMP280_Standby_t;
 
-// Standby Time
 typedef enum {
-    BMP280_STANDBY_0_5_MS = 0x00,
-    BMP280_STANDBY_10_MS = 0x01,
-    BMP280_STANDBY_20_MS = 0x02,
-    BMP280_STANDBY_62_5_MS = 0x03,
-    BMP280_STANDBY_125_MS = 0x04,
-    BMP280_STANDBY_250_MS = 0x05,
-    BMP280_STANDBY_500_MS = 0x06,
-    BMP280_STANDBY_1000_MS = 0x07
-} bmp280_standby_time_t;
+    BMP280_FILTER_OFF = 0x0,
+    BMP280_FILTER_2   = 0x1,
+    BMP280_FILTER_4   = 0x2,
+    BMP280_FILTER_8   = 0x3,
+    BMP280_FILTER_16  = 0x4,
+} BMP280_Filter_t;
 
-// Filter Settings
 typedef enum {
-    BMP280_FILTER_OFF = 0x00,
-    BMP280_FILTER_2 = 0x01,
-    BMP280_FILTER_4 = 0x02,
-    BMP280_FILTER_8 = 0x03,
-    BMP280_FILTER_16 = 0x04
-} bmp280_filter_t;
+    BMP280_OK = 0,
+    BMP280_ERR_SPI,
+    BMP280_ERR_ID,
+    BMP280_ERR_TIMEOUT,
+} BMP280_Status_t;
 
-// BMP280 Structure
+/* ---- Calibration data (read once from NVM at init) --------------------- */
 typedef struct {
-
-    SPI_HandleTypeDef *hspi;   ///< SPI Handle
-    GPIO_TypeDef* cs_port;     ///< SPI Chip Select Port
-    uint16_t cs_pin;           ///< SPI Chip Select Pin
-    bmp280_mode_t comm_mode;   ///< Communication mode: I2C or SPI
-    uint8_t address;           ///< I2C address (default 0x76)
-    // Calibration Data
     uint16_t dig_T1;
-    int16_t dig_T2;
-    int16_t dig_T3;
+    int16_t  dig_T2;
+    int16_t  dig_T3;
+
     uint16_t dig_P1;
-    int16_t dig_P2;
-    int16_t dig_P3;
-    int16_t dig_P4;
-    int16_t dig_P5;
-    int16_t dig_P6;
-    int16_t dig_P7;
-    int16_t dig_P8;
-    int16_t dig_P9;
-} bmp280_t;
+    int16_t  dig_P2;
+    int16_t  dig_P3;
+    int16_t  dig_P4;
+    int16_t  dig_P5;
+    int16_t  dig_P6;
+    int16_t  dig_P7;
+    int16_t  dig_P8;
+    int16_t  dig_P9;
+} BMP280_Calib_t;
 
-// Function Prototypes
+/* ---- Device handle ------------------------------------------------------ */
+typedef struct {
+    SPI_HandleTypeDef *hspi;
+    GPIO_TypeDef       *cs_port;
+    uint16_t            cs_pin;
 
-/**
- * @brief Initialize the BMP280 sensor
- * @param bmp Pointer to bmp280_t structure
- * @return HAL status
+    BMP280_Calib_t       calib;
+    int32_t              t_fine;   /* carries temp->pressure compensation state */
+} BMP280_t;
+
+/* ---- API ----------------------------------------------------------------- */
+
+/* Wire up the handle. Call before Init(). CS pin must already be configured
+ * as GPIO output push-pull, idle HIGH, by your MX_GPIO_Init(). */
+void BMP280_Attach(BMP280_t *dev, SPI_HandleTypeDef *hspi,
+                    GPIO_TypeDef *cs_port, uint16_t cs_pin);
+
+/* Verifies chip ID, soft-resets the sensor, reads calibration trim values,
+ * and programs ctrl_meas/config with the given settings. */
+BMP280_Status_t BMP280_Init(BMP280_t *dev,
+                             BMP280_Oversampling_t osrs_t,
+                             BMP280_Oversampling_t osrs_p,
+                             BMP280_Mode_t mode,
+                             BMP280_Standby_t standby,
+                             BMP280_Filter_t filter);
+
+BMP280_Status_t BMP280_SoftReset(BMP280_t *dev);
+BMP280_Status_t BMP280_ReadChipId(BMP280_t *dev, uint8_t *id_out);
+
+/* Forces a single one-shot conversion when the device is in SLEEP mode
+ * (only meaningful if you initialized with BMP280_MODE_FORCED and want to
+ * trigger each sample manually). Returns once BMP280_WaitMeasuring() clears. */
+BMP280_Status_t BMP280_TriggerForcedMeasurement(BMP280_t *dev);
+
+/* Polls the status register until the "measuring" bit clears (or timeout). */
+BMP280_Status_t BMP280_WaitMeasuring(BMP280_t *dev, uint32_t timeout_ms);
+
+/* Reads raw 20-bit ADC values for temperature and pressure in one burst. */
+BMP280_Status_t BMP280_ReadRaw(BMP280_t *dev, int32_t *raw_temp, int32_t *raw_press);
+
+/* Full reading, compensated to real-world units.
+ * temperature_c100  = temperature in 0.01 degC (e.g. 2534 -> 25.34 C)
+ * pressure_pa256     = pressure in Pa, Q24.8 fixed point (divide by 256 for Pa)
  */
-HAL_StatusTypeDef bmp280_init(bmp280_t *bmp);
+BMP280_Status_t BMP280_ReadCompensated(BMP280_t *dev,
+                                        int32_t *temperature_c100,
+                                        uint32_t *pressure_pa256);
 
-/**
- * @brief Read raw temperature and pressure data
- * @param bmp Pointer to bmp280_t structure
- * @param temperature_raw Pointer to store raw temperature
- * @param pressure_raw Pointer to store raw pressure
- * @return HAL status
- */
-HAL_StatusTypeDef bmp280_read_raw(bmp280_t *bmp, int32_t *temperature_raw, int32_t *pressure_raw);
+/* Convenience float wrapper (uses the fixed-point path internally, then
+ * converts - keeps a single source of truth for the compensation math). */
+BMP280_Status_t BMP280_ReadFloat(BMP280_t *dev, float *temperature_c, float *pressure_hpa);
 
-/**
- * @brief Calculate actual temperature from raw data
- * @param bmp Pointer to bmp280_t structure
- * @param temperature_raw Raw temperature data
- * @return Temperature in °C
- */
-float bmp280_compensate_temperature(bmp280_t *bmp, int32_t temperature_raw);
+/* Low-level single/multi register access, exposed in case you need it
+ * directly (e.g. reading OTP/NVM regions not covered above). */
+BMP280_Status_t BMP280_ReadRegs(BMP280_t *dev, uint8_t reg, uint8_t *buf, uint16_t len);
+BMP280_Status_t BMP280_WriteReg(BMP280_t *dev, uint8_t reg, uint8_t value);
 
-/**
- * @brief Calculate actual pressure from raw data
- * @param bmp Pointer to bmp280_t structure
- * @param pressure_raw Raw pressure data
- * @return Pressure in hPa
- */
-float bmp280_compensate_pressure(bmp280_t *bmp, int32_t pressure_raw);
+#ifdef __cplusplus
+}
+#endif
 
-/**
- * @brief Calculate altitude based on pressure
- * @param pressure Pressure in hPa
- * @param sea_level_pressure Sea level pressure in hPa
- * @return Altitude in meters
- */
-float bmp280_calculate_altitude(float pressure, float sea_level_pressure);
-
-/**
- * @brief Set sensor configuration
- * @param bmp Pointer to bmp280_t structure
- * @param mode Operating mode
- * @param osrs_t Temperature oversampling
- * @param osrs_p Pressure oversampling
- * @param filter Filter setting
- * @param standby Standby time
- * @return HAL status
- */
-HAL_StatusTypeDef bmp280_set_configuration(bmp280_t *bmp, bmp280_operating_mode_t mode,
-                                           bmp280_oversampling_t osrs_t, bmp280_oversampling_t osrs_p,
-                                           bmp280_filter_t filter, bmp280_standby_time_t standby);
-
-/**
- * @brief Soft reset the BMP280 sensor
- * @param bmp Pointer to bmp280_t structure
- * @return HAL status
- */
-HAL_StatusTypeDef bmp280_soft_reset(bmp280_t *bmp);
-
-
-#endif /* INC_BMP280_H_ */
+#endif /* BMP280_SPI_H */
