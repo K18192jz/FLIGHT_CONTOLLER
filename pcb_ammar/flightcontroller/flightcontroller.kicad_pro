@@ -661,7 +661,7 @@
         "uuid": "e7acb6fd-a50d-4668-bb2b-42d87d2f1e4c"
       }
     ],
-    "used_designators": "spi_flash1,#PWR1-35,Y1-2,LDO1,C1-15,U1-2,D1-3,L1-2,SW1-3,R1-9,#FLG1-4,J1,USBC1,regulator1",
+    "used_designators": "spi_flash1,Y1-2,#PWR1-35,D1-3,L1-2,LDO1,C1-15,U1-2,SW1-3,R1-9,#FLG1-4,J1,USBC1,regulator1",
     "variants": []
   },
   "sheets": [
