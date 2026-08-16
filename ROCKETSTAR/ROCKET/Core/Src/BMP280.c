@@ -1,221 +1,260 @@
 /*
  * BMP280.c
  *
- *  Created on: Sep 21, 2024
- *      Author: medam
+ * BMP280 SPI driver implementation. See BMP280.h for wiring notes.
+ *
+ * Compensation formulas are the fixed-point (int32) reference implementation
+ * from the Bosch BMP280 datasheet, section 3.11.3 (32-bit compensation,
+ * no FPU/double required). t_fine is computed by the temperature
+ * compensation and must be reused by the pressure compensation - that
+ * coupling is why we always read temp+pressure together.
  */
 
 #include "BMP280.h"
-#include <string.h>
-#include "math.h"
 
-// BMP280 Register Addresses
-#define BMP280_REG_CHIPID     0xD0
-#define BMP280_REG_RESET      0xE0
-#define BMP280_REG_STATUS     0xF3
-#define BMP280_REG_CTRL_MEAS  0xF4
-#define BMP280_REG_CONFIG     0xF5
-#define BMP280_REG_PRESS_MSB  0xF7
-#define BMP280_REG_PRESS_LSB  0xF8
-#define BMP280_REG_PRESS_XLSB 0xF9
-#define BMP280_REG_TEMP_MSB   0xFA
-#define BMP280_REG_TEMP_LSB   0xFB
-#define BMP280_REG_TEMP_XLSB  0xFC
-
-// BMP280 Chip ID
-#define BMP280_CHIPID         0x58
-
-// BMP280 Reset Command
-#define BMP280_SOFT_RESET_CMD 0xB6
-
-
-// Helper functions for I2C and SPI communication
-
-static HAL_StatusTypeDef bmp280_write_register(bmp280_t *bmp, uint8_t reg, uint8_t value) {
-// SPI
-        HAL_GPIO_WritePin(bmp->cs_port, bmp->cs_pin, GPIO_PIN_RESET);
-        uint8_t tx_buffer[2] = { reg, value };
-        HAL_StatusTypeDef status = HAL_SPI_Transmit(bmp->hspi, tx_buffer, 2, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(bmp->cs_port, bmp->cs_pin, GPIO_PIN_SET);
-        return status;
-
+/* ---- CS helpers ----------------------------------------------------- */
+static inline void bmp280_cs_low(BMP280_t *dev)
+{
+    HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_RESET);
 }
 
-static HAL_StatusTypeDef bmp280_read_registers(bmp280_t *bmp, uint8_t reg, uint8_t *buffer, uint16_t length) {
- // SPI
-        HAL_GPIO_WritePin(bmp->cs_port, bmp->cs_pin, GPIO_PIN_RESET);
-        uint8_t tx_buffer[1] = { reg | 0x80 }; // Set read bit
-        HAL_StatusTypeDef status = HAL_SPI_Transmit(bmp->hspi, tx_buffer, 1, HAL_MAX_DELAY);
-        if (status != HAL_OK) {
-            HAL_GPIO_WritePin(bmp->cs_port, bmp->cs_pin, GPIO_PIN_SET);
-            return status;
+static inline void bmp280_cs_high(BMP280_t *dev)
+{
+    HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_SET);
+}
+
+#define BMP280_SPI_TIMEOUT_MS  100u
+
+/* ---- Low-level register access --------------------------------------- */
+
+BMP280_Status_t BMP280_ReadRegs(BMP280_t *dev, uint8_t reg, uint8_t *buf, uint16_t len)
+{
+    uint8_t addr = reg | 0x80u; /* MSB=1 selects read */
+    HAL_StatusTypeDef st;
+
+    bmp280_cs_low(dev);
+
+    st = HAL_SPI_Transmit(dev->hspi, &addr, 1, BMP280_SPI_TIMEOUT_MS);
+    if (st == HAL_OK) {
+        st = HAL_SPI_Receive(dev->hspi, buf, len, BMP280_SPI_TIMEOUT_MS);
+    }
+
+    bmp280_cs_high(dev);
+
+    if (st == HAL_TIMEOUT) return BMP280_ERR_TIMEOUT;
+    if (st != HAL_OK)      return BMP280_ERR_SPI;
+    return BMP280_OK;
+}
+
+BMP280_Status_t BMP280_WriteReg(BMP280_t *dev, uint8_t reg, uint8_t value)
+{
+    uint8_t tx[2];
+    HAL_StatusTypeDef st;
+
+    tx[0] = reg & 0x7Fu; /* MSB=0 selects write */
+    tx[1] = value;
+
+    bmp280_cs_low(dev);
+    st = HAL_SPI_Transmit(dev->hspi, tx, 2, BMP280_SPI_TIMEOUT_MS);
+    bmp280_cs_high(dev);
+
+    if (st == HAL_TIMEOUT) return BMP280_ERR_TIMEOUT;
+    if (st != HAL_OK)      return BMP280_ERR_SPI;
+    return BMP280_OK;
+}
+
+/* ---- Setup ------------------------------------------------------------ */
+
+void BMP280_Attach(BMP280_t *dev, SPI_HandleTypeDef *hspi,
+                    GPIO_TypeDef *cs_port, uint16_t cs_pin)
+{
+    dev->hspi    = hspi;
+    dev->cs_port = cs_port;
+    dev->cs_pin  = cs_pin;
+    dev->t_fine  = 0;
+    bmp280_cs_high(dev); /* idle high before anything else touches the bus */
+}
+
+BMP280_Status_t BMP280_ReadChipId(BMP280_t *dev, uint8_t *id_out)
+{
+    return BMP280_ReadRegs(dev, BMP280_REG_ID, id_out, 1);
+}
+
+BMP280_Status_t BMP280_SoftReset(BMP280_t *dev)
+{
+    BMP280_Status_t st = BMP280_WriteReg(dev, BMP280_REG_RESET, BMP280_SOFT_RESET_CMD);
+    if (st != BMP280_OK) return st;
+    HAL_Delay(5); /* datasheet: allow time for NVM reload after reset */
+    return BMP280_OK;
+}
+
+static BMP280_Status_t bmp280_read_calibration(BMP280_t *dev)
+{
+    uint8_t raw[24];
+    BMP280_Status_t st = BMP280_ReadRegs(dev, BMP280_REG_CALIB_START, raw, sizeof(raw));
+    if (st != BMP280_OK) return st;
+
+    /* All calibration words are little-endian in the register map. */
+    dev->calib.dig_T1 = (uint16_t)(raw[0]  | (raw[1]  << 8));
+    dev->calib.dig_T2 = (int16_t) (raw[2]  | (raw[3]  << 8));
+    dev->calib.dig_T3 = (int16_t) (raw[4]  | (raw[5]  << 8));
+
+    dev->calib.dig_P1 = (uint16_t)(raw[6]  | (raw[7]  << 8));
+    dev->calib.dig_P2 = (int16_t) (raw[8]  | (raw[9]  << 8));
+    dev->calib.dig_P3 = (int16_t) (raw[10] | (raw[11] << 8));
+    dev->calib.dig_P4 = (int16_t) (raw[12] | (raw[13] << 8));
+    dev->calib.dig_P5 = (int16_t) (raw[14] | (raw[15] << 8));
+    dev->calib.dig_P6 = (int16_t) (raw[16] | (raw[17] << 8));
+    dev->calib.dig_P7 = (int16_t) (raw[18] | (raw[19] << 8));
+    dev->calib.dig_P8 = (int16_t) (raw[20] | (raw[21] << 8));
+    dev->calib.dig_P9 = (int16_t) (raw[22] | (raw[23] << 8));
+
+    return BMP280_OK;
+}
+
+BMP280_Status_t BMP280_Init(BMP280_t *dev,
+                             BMP280_Oversampling_t osrs_t,
+                             BMP280_Oversampling_t osrs_p,
+                             BMP280_Mode_t mode,
+                             BMP280_Standby_t standby,
+                             BMP280_Filter_t filter)
+{
+    uint8_t id = 0;
+    BMP280_Status_t st;
+
+    st = BMP280_ReadChipId(dev, &id);
+    if (st != BMP280_OK) return st;
+    if (id != BMP280_CHIP_ID) return BMP280_ERR_ID;
+
+    st = BMP280_SoftReset(dev);
+    if (st != BMP280_OK) return st;
+
+    st = bmp280_read_calibration(dev);
+    if (st != BMP280_OK) return st;
+
+    /* config: standby[7:5] | filter[4:2] | spi3w_en[0] (leave 4-wire = 0) */
+    uint8_t config_reg = (uint8_t)((standby << 5) | (filter << 2));
+    st = BMP280_WriteReg(dev, BMP280_REG_CONFIG, config_reg);
+    if (st != BMP280_OK) return st;
+
+    /* ctrl_meas: osrs_t[7:5] | osrs_p[4:2] | mode[1:0] */
+    uint8_t ctrl_meas = (uint8_t)((osrs_t << 5) | (osrs_p << 2) | mode);
+    st = BMP280_WriteReg(dev, BMP280_REG_CTRL_MEAS, ctrl_meas);
+    if (st != BMP280_OK) return st;
+
+    return BMP280_OK;
+}
+
+BMP280_Status_t BMP280_TriggerForcedMeasurement(BMP280_t *dev)
+{
+    uint8_t ctrl_meas;
+    BMP280_Status_t st = BMP280_ReadRegs(dev, BMP280_REG_CTRL_MEAS, &ctrl_meas, 1);
+    if (st != BMP280_OK) return st;
+
+    ctrl_meas = (uint8_t)((ctrl_meas & ~0x03u) | BMP280_MODE_FORCED);
+    return BMP280_WriteReg(dev, BMP280_REG_CTRL_MEAS, ctrl_meas);
+}
+
+BMP280_Status_t BMP280_WaitMeasuring(BMP280_t *dev, uint32_t timeout_ms)
+{
+    uint32_t start = HAL_GetTick();
+    uint8_t status;
+
+    do {
+        BMP280_Status_t st = BMP280_ReadRegs(dev, BMP280_REG_STATUS, &status, 1);
+        if (st != BMP280_OK) return st;
+
+        if ((status & 0x08u) == 0) { /* "measuring" bit clear -> done */
+            return BMP280_OK;
         }
-        status = HAL_SPI_Receive(bmp->hspi, buffer, length, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(bmp->cs_port, bmp->cs_pin, GPIO_PIN_SET);
-        return status;
+    } while ((HAL_GetTick() - start) < timeout_ms);
 
+    return BMP280_ERR_TIMEOUT;
 }
 
-// Calibration Data Reading
-static HAL_StatusTypeDef bmp280_read_calibration_data(bmp280_t *bmp) {
-    uint8_t calib_data[24];
-    // Read calibration data from 0x88 to 0xA1
-    // BMP280 uses different registers for calibration
-    // For simplicity, assuming calibration data is contiguous (verify from datasheet)
-    // In reality, BMP280 has calibration registers spread out
-    // Adjust according to datasheet
+/* ---- Raw + compensated reads ------------------------------------------ */
 
-    // BMP280 has calibration registers from 0x88 to 0xA1
-    // Read all calibration data
-// SPI
-        HAL_GPIO_WritePin(bmp->cs_port, bmp->cs_pin, GPIO_PIN_RESET);
-        uint8_t tx_buffer[1] = { 0x88 | 0x80 }; // Read starting at 0x88
-        HAL_StatusTypeDef status = HAL_SPI_Transmit(bmp->hspi, tx_buffer, 1, HAL_MAX_DELAY);
-        if (status != HAL_OK) {
-            HAL_GPIO_WritePin(bmp->cs_port, bmp->cs_pin, GPIO_PIN_SET);
-            return status;
-        }
-        status = HAL_SPI_Receive(bmp->hspi, calib_data, 24, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(bmp->cs_port, bmp->cs_pin, GPIO_PIN_SET);
-        if (status != HAL_OK)
-            return status;
+BMP280_Status_t BMP280_ReadRaw(BMP280_t *dev, int32_t *raw_temp, int32_t *raw_press)
+{
+    uint8_t buf[6];
+    /* Burst-read press(3) + temp(3): the chip latches all 6 bytes together
+     * on the first press MSB read, so this is atomic w.r.t. a running
+     * conversion. */
+    BMP280_Status_t st = BMP280_ReadRegs(dev, BMP280_REG_PRESS_MSB, buf, sizeof(buf));
+    if (st != BMP280_OK) return st;
 
+    *raw_press = (int32_t)(((uint32_t)buf[0] << 12) | ((uint32_t)buf[1] << 4) | (buf[2] >> 4));
+    *raw_temp  = (int32_t)(((uint32_t)buf[3] << 12) | ((uint32_t)buf[4] << 4) | (buf[5] >> 4));
 
-    // Parse calibration data
-    bmp->dig_T1 = (uint16_t)(calib_data[1] << 8 | calib_data[0]);
-    bmp->dig_T2 = (int16_t)(calib_data[3] << 8 | calib_data[2]);
-    bmp->dig_T3 = (int16_t)(calib_data[5] << 8 | calib_data[4]);
-
-    bmp->dig_P1 = (uint16_t)(calib_data[7] << 8 | calib_data[6]);
-    bmp->dig_P2 = (int16_t)(calib_data[9] << 8 | calib_data[8]);
-    bmp->dig_P3 = (int16_t)(calib_data[11] << 8 | calib_data[10]);
-    bmp->dig_P4 = (int16_t)(calib_data[13] << 8 | calib_data[12]);
-    bmp->dig_P5 = (int16_t)(calib_data[15] << 8 | calib_data[14]);
-    bmp->dig_P6 = (int16_t)(calib_data[17] << 8 | calib_data[16]);
-    bmp->dig_P7 = (int16_t)(calib_data[19] << 8 | calib_data[18]);
-    bmp->dig_P8 = (int16_t)(calib_data[21] << 8 | calib_data[20]);
-    bmp->dig_P9 = (int16_t)(calib_data[23] << 8 | calib_data[22]);
-
-    return HAL_OK;
+    return BMP280_OK;
 }
 
-// Initialization Function
-HAL_StatusTypeDef bmp280_init(bmp280_t *bmp) {
-    HAL_StatusTypeDef status;
+/* Bosch reference compensation, ported directly (variable names kept close
+ * to the datasheet so it's easy to diff against errata / future revisions). */
+static int32_t bmp280_compensate_T_int32(BMP280_t *dev, int32_t adc_T)
+{
+    int32_t var1, var2, T;
 
-    // Verify communication mode
+    var1 = ((((adc_T >> 3) - ((int32_t)dev->calib.dig_T1 << 1))) * (int32_t)dev->calib.dig_T2) >> 11;
+    var2 = (((((adc_T >> 4) - (int32_t)dev->calib.dig_T1) *
+              ((adc_T >> 4) - (int32_t)dev->calib.dig_T1)) >> 12) * (int32_t)dev->calib.dig_T3) >> 14;
 
-    if (bmp->comm_mode == BMP280_MODE_SPI && (bmp->hspi == NULL || bmp->cs_port == NULL)) {
-        return HAL_ERROR;
+    dev->t_fine = var1 + var2;
+    T = (dev->t_fine * 5 + 128) >> 8;
+    return T; /* in 0.01 degC */
+}
+
+static uint32_t bmp280_compensate_P_int64(BMP280_t *dev, int32_t adc_P)
+{
+    int64_t var1, var2, p;
+
+    var1 = (int64_t)dev->t_fine - 128000;
+    var2 = var1 * var1 * (int64_t)dev->calib.dig_P6;
+    var2 = var2 + ((var1 * (int64_t)dev->calib.dig_P5) << 17);
+    var2 = var2 + (((int64_t)dev->calib.dig_P4) << 35);
+    var1 = ((var1 * var1 * (int64_t)dev->calib.dig_P3) >> 8) +
+           ((var1 * (int64_t)dev->calib.dig_P2) << 12);
+    var1 = (((((int64_t)1) << 47) + var1)) * (int64_t)dev->calib.dig_P1 >> 33;
+
+    if (var1 == 0) {
+        return 0; /* avoid divide-by-zero */
     }
 
-    // Read Chip ID
-    uint8_t chip_id;
-    status = bmp280_read_registers(bmp, BMP280_REG_CHIPID, &chip_id, 1);
-    if (status != HAL_OK || chip_id != BMP280_CHIPID) {
-        return HAL_ERROR;
-    }
+    p = 1048576 - adc_P;
+    p = (((p << 31) - var2) * 3125) / var1;
+    var1 = (((int64_t)dev->calib.dig_P9) * (p >> 13) * (p >> 13)) >> 25;
+    var2 = (((int64_t)dev->calib.dig_P8) * p) >> 19;
+    p = ((p + var1 + var2) >> 8) + (((int64_t)dev->calib.dig_P7) << 4);
 
-    // Read calibration data
-    status = bmp280_read_calibration_data(bmp);
-    if (status != HAL_OK) {
-        return HAL_ERROR;
-    }
-
-    // Set default configuration: Normal mode, oversampling x1, filter off, standby time 1000ms
-    status = bmp280_set_configuration(bmp, BMP280_MODE_NORMAL, BMP280_OSAMPLE_1, BMP280_OSAMPLE_1, BMP280_FILTER_OFF, BMP280_STANDBY_1000_MS);
-    if (status != HAL_OK) {
-        return HAL_ERROR;
-    }
-
-    return HAL_OK;
+    return (uint32_t)p; /* Q24.8 format: Pa = p / 256 */
 }
 
-// Soft Reset Function
-HAL_StatusTypeDef bmp280_soft_reset(bmp280_t *bmp) {
-    HAL_StatusTypeDef status = bmp280_write_register(bmp, BMP280_REG_RESET, BMP280_SOFT_RESET_CMD);
-    HAL_Delay(10); // Wait for reset to complete
-    return status;
+BMP280_Status_t BMP280_ReadCompensated(BMP280_t *dev,
+                                        int32_t *temperature_c100,
+                                        uint32_t *pressure_pa256)
+{
+    int32_t raw_t, raw_p;
+    BMP280_Status_t st = BMP280_ReadRaw(dev, &raw_t, &raw_p);
+    if (st != BMP280_OK) return st;
+
+    /* Temperature MUST be compensated first: it sets dev->t_fine, which the
+     * pressure compensation depends on. */
+    *temperature_c100 = bmp280_compensate_T_int32(dev, raw_t);
+    *pressure_pa256    = bmp280_compensate_P_int64(dev, raw_p);
+
+    return BMP280_OK;
 }
 
-// Set Configuration Function
-HAL_StatusTypeDef bmp280_set_configuration(bmp280_t *bmp, bmp280_operating_mode_t mode,
-                                           bmp280_oversampling_t osrs_t, bmp280_oversampling_t osrs_p,
-                                           bmp280_filter_t filter, bmp280_standby_time_t standby) {
-    uint8_t ctrl_meas = 0;
-    uint8_t config = 0;
+BMP280_Status_t BMP280_ReadFloat(BMP280_t *dev, float *temperature_c, float *pressure_hpa)
+{
+    int32_t t100;
+    uint32_t p256;
 
-    // Configure CTRL_MEAS register
-    ctrl_meas |= (osrs_t << 5); // Temperature oversampling
-    ctrl_meas |= (osrs_p << 2); // Pressure oversampling
-    ctrl_meas |= mode;          // Mode
+    BMP280_Status_t st = BMP280_ReadCompensated(dev, &t100, &p256);
+    if (st != BMP280_OK) return st;
 
-    // Configure CONFIG register
-    config |= (filter << 2);    // Filter
-    config |= (standby << 5);   // Standby time
+    *temperature_c = (float)t100 / 100.0f;
+    *pressure_hpa  = ((float)p256 / 256.0f) / 100.0f; /* Pa -> hPa */
 
-    // Write to CTRL_MEAS register
-    if (bmp280_write_register(bmp, BMP280_REG_CTRL_MEAS, ctrl_meas) != HAL_OK)
-        return HAL_ERROR;
-
-    // Write to CONFIG register
-    if (bmp280_write_register(bmp, BMP280_REG_CONFIG, config) != HAL_OK)
-        return HAL_ERROR;
-
-    return HAL_OK;
+    return BMP280_OK;
 }
-
-// Read Raw Data Function
-HAL_StatusTypeDef bmp280_read_raw(bmp280_t *bmp, int32_t *temperature_raw, int32_t *pressure_raw) {
-    uint8_t data[6];
-    HAL_StatusTypeDef status;
-
-    // Read temperature and pressure data
-    status = bmp280_read_registers(bmp, BMP280_REG_PRESS_MSB, data, 6);
-    if (status != HAL_OK)
-        return HAL_ERROR;
-
-    *pressure_raw = ((int32_t)data[0] << 12) | ((int32_t)data[1] << 4) | ((int32_t)(data[2] >> 4));
-    *temperature_raw = ((int32_t)data[3] << 12) | ((int32_t)data[4] << 4) | ((int32_t)(data[5] >> 4));
-
-    return HAL_OK;
-}
-static float T_fine;
-// Temperature Compensation Function
-float bmp280_compensate_temperature(bmp280_t *bmp, int32_t temperature_raw) {
-    float var1, var2, T;
-
-
-    var1 = (((float)temperature_raw) / 16384.0 - ((float)bmp->dig_T1) / 1024.0) * ((float)bmp->dig_T2);
-    var2 = ((((float)temperature_raw) / 131072.0 - ((float)bmp->dig_T1) / 8192.0) *
-            (((float)temperature_raw) / 131072.0 - ((float)bmp->dig_T1) / 8192.0)) *
-           ((float)bmp->dig_T3);
-    T_fine = var1 + var2;
-    T = T_fine / 5120.0;
-    return T;
-}
-
-// Pressure Compensation Function
-float bmp280_compensate_pressure(bmp280_t *bmp, int32_t pressure_raw) {
-    float var1, var2, p;
-    var1 = ((float)T_fine / 2.0) - 64000.0;
-    var2 = var1 * var1 * ((float)bmp->dig_P6) / 32768.0;
-    var2 = var2 + var1 * ((float)bmp->dig_P5) * 2.0;
-    var2 = (var2 / 4.0) + (((float)bmp->dig_P4) * 65536.0);
-    var1 = (((float)bmp->dig_P3) * var1 * var1 / 524288.0 + ((float)bmp->dig_P2) * var1) / 524288.0;
-    var1 = (1.0 + var1 / 32768.0) * ((float)bmp->dig_P1);
-    if (var1 == 0.0)
-        return 0; // Avoid division by zero
-    p = 1048576.0 - (float)pressure_raw;
-    p = ((p - (var2 / 4096.0)) * 6250.0) / var1;
-    var1 = ((float)bmp->dig_P9) * p * p / 2147483648.0;
-    var2 = p * ((float)bmp->dig_P8) / 32768.0;
-    p = p + (var1 + var2 + ((float)bmp->dig_P7)) / 16.0;
-    return p / 100.0; // Convert to hPa
-}
-
-// Altitude Calculation Function
-float bmp280_calculate_altitude(float pressure, float sea_level_pressure) {
-    return 44330.0 * (1.0 - pow(pressure / sea_level_pressure, 0.1903));
-}
-
