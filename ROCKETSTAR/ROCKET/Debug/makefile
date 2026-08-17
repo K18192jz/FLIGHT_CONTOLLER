@@ -64,8 +64,8 @@ all: main-build
 main-build: ROCKET.elf secondary-outputs
 
 # Tool invocations
-ROCKET.elf ROCKET.map: $(OBJS) $(USER_OBJS) /home/bill/Projects/rocket/FLIGHT_CONTOLLER/ROCKETSTAR/ROCKET/STM32F411CCUX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "ROCKET.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/bill/Projects/rocket/FLIGHT_CONTOLLER/ROCKETSTAR/ROCKET/STM32F411CCUX_FLASH.ld" --specs=nosys.specs -Wl,-Map="ROCKET.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+ROCKET.elf ROCKET.map: $(OBJS) $(USER_OBJS) C:\Users\Dell\OneDrive\Bureau\FLIGHT_CONTOLLER\ROCKETSTAR\ROCKET\STM32F411CCUX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "ROCKET.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\Dell\OneDrive\Bureau\FLIGHT_CONTOLLER\ROCKETSTAR\ROCKET\STM32F411CCUX_FLASH.ld" --specs=nosys.specs -Wl,-Map="ROCKET.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

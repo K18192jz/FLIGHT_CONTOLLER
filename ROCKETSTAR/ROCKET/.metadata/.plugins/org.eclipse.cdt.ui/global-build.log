@@ -1,28 +1,9 @@
-22:59:38 **** Incremental Build of configuration Debug for project ROCKET ****
+21:20:39 **** Build of configuration Debug for project ROCKET ****
 make -j12 all 
 arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F411xE -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -I../USB_DEVICE/App -I../USB_DEVICE/Target -I../Middlewares/ST/STM32_USB_Device_Library/Core/Inc -I../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
-In file included from ../Core/Inc/stm32f4xx_hal_conf.h:279,
-                 from ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h:29,
-                 from ../Core/Inc/main.h:30,
-                 from ../Core/Src/main.c:20:
-../Core/Src/main.c: In function 'main':
-../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_gpio.h:97:36: warning: conversion from 'short unsigned int' to 'uint8_t' {aka 'unsigned char'} changes value from '4096' to '0' [-Woverflow]
-   97 | #define GPIO_PIN_12                ((uint16_t)0x1000)  /* Pin 12 selected   */
-      |                                    ^
-../Core/Src/main.c:115:37: note: in expansion of macro 'GPIO_PIN_12'
-  115 |           MPU9250.settings.CS_PIN = GPIO_PIN_12;
-      |                                     ^~~~~~~~~~~
-../Core/Src/main.c:198:21: warning: unused variable 'temperature' [-Wunused-variable]
-  198 |               float temperature = (float)t100 / 100.0f;
-      |                     ^~~~~~~~~~~
-arm-none-eabi-gcc -o "ROCKET.elf" @"objects.list"   -mcpu=cortex-m4 -T"C:\Users\Dell\OneDrive\Documents\ROCKETSTAR\ROCKET\STM32F411CCUX_FLASH.ld" --specs=nosys.specs -Wl,-Map="ROCKET.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
-Finished building target: ROCKET.elf
- 
-arm-none-eabi-size  ROCKET.elf 
-arm-none-eabi-objdump -h -S ROCKET.elf  > "ROCKET.list"
-   text	   data	    bss	    dec	    hex	filename
-  45808	    332	   9260	  55400	   d868	ROCKET.elf
-Finished building: default.size.stdout
- 
-Finished building: ROCKET.list
- 
+../Core/Src/main.c:32:10: fatal error: sdcard.h: No such file or directory
+   32 | #include "sdcard.h"
+      |          ^~~~~~~~~~
+compilation terminated.
+make: *** [Core/Src/subdir.mk:40: Core/Src/main.o] Error 1
+"make -j12 all" terminated with exit code 2. Build might be incomplete.

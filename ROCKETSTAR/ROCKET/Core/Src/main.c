@@ -27,11 +27,9 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-
-
 #include "MPU9250.h"
 #include "BMP280.h"
-
+#include "sdcard.h"
 
 /* USER CODE END Includes */
 
@@ -68,19 +66,8 @@ static void MX_SPI2_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-
-
-
-
-
-
-
 MPU9250_t MPU9250;
 static BMP280_t bmp280;
-
-
-
-
 
 void USB_Print(const char* str)
 {
@@ -97,8 +84,6 @@ void USB_Printf(const char* format, ...)
     CDC_Transmit_FS((uint8_t*)buf, strlen(buf));
 }
 
-
-
 /* USER CODE END 0 */
 
 /**
@@ -110,19 +95,12 @@ int main(void)
 
   /* USER CODE BEGIN 1 */
 
-
-	  MPU9250.settings.gFullScaleRange = GFSR_500DPS;
-	  MPU9250.settings.aFullScaleRange = AFSR_4G;
-	  MPU9250.settings.CS_PIN = GPIO_PIN_12;
-	  MPU9250.settings.CS_PORT = GPIOB;
-	  MPU9250.attitude.tau = 0.98;
-	  MPU9250.attitude.dt = 0.004;
-
-
-
-
-
-
+  MPU9250.settings.gFullScaleRange = GFSR_500DPS;
+  MPU9250.settings.aFullScaleRange = AFSR_4G;
+  MPU9250.settings.CS_PIN = GPIO_PIN_12;
+  MPU9250.settings.CS_PORT = GPIOB;
+  MPU9250.attitude.tau = 0.98;
+  MPU9250.attitude.dt = 0.004;
 
   /* USER CODE END 1 */
 
@@ -148,28 +126,14 @@ int main(void)
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
 
-
-
-HAL_Delay(1000);
-//USB_Printf("ERROR\n\r");
-
-
-
-
+  HAL_Delay(1000);
 
   if (MPU_begin(&hspi2, &MPU9250) != 1)
   {
-    //sprintf((char *)serialBuf, "ERROR!\r\n");
-
-    //HAL_UART_Transmit(&huart2, serialBuf, strlen((char *)serialBuf), HAL_MAX_DELAY);
-	  USB_Printf("ERROR\n\r");
-	  //while (1){}
+      USB_Printf("ERROR\n\r");
   }
 
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_RESET);
-
-
-
 
   BMP280_Attach(&bmp280, &hspi2, GPIOC, GPIO_PIN_15);
   BMP280_Status_t st = BMP280_Init(&bmp280,
@@ -179,26 +143,71 @@ HAL_Delay(1000);
                                     BMP280_STANDBY_62_5MS,   /* time between samples */
                                     BMP280_FILTER_4);        /* IIR filter */
 
-
-
   if (st != BMP280_OK) {
-      /* Common causes: wrong CS pin/port, SPI mode not 0/3, MISO/MOSI
-       * swapped, or CSB tied to GND (forces I2C mode on the chip) instead
-       * of being driven by this GPIO. */
-	  USB_Printf("BMP280 init failed, err=%d\r\n", (int)st);
-      //Error_Handler();
+      USB_Printf("BMP280 init failed, err=%d\r\n", (int)st);
   }
 
   USB_Printf("BMP280 ready\r\n");
 
-
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET);
-
 
   MPU_calibrateGyro(&hspi2, &MPU9250, 1500);
 
+  /* --- Début Code SD Card --- */
 
+  // IMPORTANT : mettre CS à l'état haut AVANT toute autre init SPI
+  SDCARD_Unselect();
 
+  int ret = SDCARD_Init();
+  if (ret != 0) {
+      USB_Printf("SDCARD_Init failed: %d\r\n", ret);
+      Error_Handler();
+  }
+  USB_Printf("SDCARD_Init OK\r\n");
+
+  // Lire le nombre de blocs de la carte
+  uint32_t numBlocks = 0;
+  if (SDCARD_GetBlocksNumber(&numBlocks) == 0) {
+      USB_Printf("Nombre de blocs : %lu (~%lu Mo)\r\n",
+                 (unsigned long)numBlocks,
+                 (unsigned long)(numBlocks / 2 / 1024));
+  } else {
+      USB_Printf("Erreur lecture CSD\r\n");
+  }
+
+  // Ecrire un bloc de test
+  uint8_t writeBuf[512];
+  memset(writeBuf, 0xAA, sizeof(writeBuf));
+  strcpy((char*)writeBuf, "Hello SD card!");
+
+  if (SDCARD_WriteSingleBlock(0, writeBuf) == 0) {
+      USB_Printf("Ecriture bloc 0 OK\r\n");
+  } else {
+      USB_Printf("Erreur ecriture bloc 0\r\n");
+  }
+
+  // Relire ce bloc pour vérifier
+  uint8_t readBuf[512] = {0};
+  if (SDCARD_ReadSingleBlock(0, readBuf) == 0) {
+      USB_Printf("Lecture bloc 0 OK : %s\r\n", (char*)readBuf);
+  } else {
+      USB_Printf("Erreur lecture bloc 0\r\n");
+  }
+
+  // Lecture multi-blocs (blocs 0 à 3)
+  uint8_t multiBuf[512];
+  if (SDCARD_ReadBegin(0) == 0) {
+      for (int i = 0; i < 4; i++) {
+          if (SDCARD_ReadData(multiBuf) != 0) {
+              USB_Printf("Erreur lecture multi-bloc %d\r\n", i);
+              break;
+          }
+          USB_Printf("Bloc %d lu, premier octet = 0x%02X\r\n", i, multiBuf[0]);
+      }
+      SDCARD_ReadEnd();
+  }
+
+  /* --- Fin Code SD Card --- */
 
   /* USER CODE END 2 */
 
@@ -206,50 +215,36 @@ HAL_Delay(1000);
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
 
+      MPU_calcAttitude(&hspi2, &MPU9250);
+      int16_t roll = roundf(10 * MPU9250.attitude.r);
+      uint8_t rollDecimal = abs(roll % 10);
+      int16_t pitch = roundf(10 * MPU9250.attitude.p);
+      uint8_t pitchDecimal = abs(pitch % 10);
+      int16_t yaw = roundf(10 * MPU9250.attitude.y);
+      uint8_t yawDecimal = abs(yaw % 10);
 
-	  HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+      USB_Printf("%d.%d,%d.%d,%d.%d\n\r",roll/10, rollDecimal, pitch/10, pitchDecimal, yaw/10, yawDecimal);
 
-	    MPU_calcAttitude(&hspi2, &MPU9250);
-	    int16_t roll = roundf(10 * MPU9250.attitude.r);
-	    uint8_t rollDecimal = abs(roll % 10);
-	    int16_t pitch = roundf(10 * MPU9250.attitude.p);
-	    uint8_t pitchDecimal = abs(pitch % 10);
-	    int16_t yaw = roundf(10 * MPU9250.attitude.y);
-	    uint8_t yawDecimal = abs(yaw % 10);
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_RESET);
 
+      int32_t t100;
+      uint32_t p256;
 
+      if (BMP280_ReadCompensated(&bmp280, &t100, &p256) == BMP280_OK) {
+          USB_Printf("T = %ld.%02ld C   P = %lu.%02lu hPa\r\n",
+                     t100 / 100, abs((int)(t100 % 100)),
+                     p256 / 256, ((p256 % 256) * 100) / 256);
+      } else {
+          USB_Printf("BMP280 read error\r\n");
+      }
 
-	  USB_Printf("%d.%d,%d.%d,%d.%d\n\r",roll/10, rollDecimal, pitch/10, pitchDecimal, yaw/10, yawDecimal);
+      HAL_Delay(1000);
 
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET);
 
-
-	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_RESET);
-
-
-
-
-	  int32_t t100;
-	  uint32_t p256;
-
-	  if (BMP280_ReadCompensated(&bmp280, &t100, &p256) == BMP280_OK) {
-	      USB_Printf("T = %ld.%02ld C   P = %lu.%02lu hPa\r\n",
-	                 t100 / 100, abs((int)(t100 % 100)),
-	                 p256 / 256, ((p256 % 256) * 100) / 256);
-	  } else {
-	      USB_Printf("BMP280 read error\r\n");
-	  }
-
-	    HAL_Delay(1000);
-
-
-
-	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET);
-
-
-
-	  HAL_Delay(1000);
-
+      HAL_Delay(1000);
 
     /* USER CODE END WHILE */
 
