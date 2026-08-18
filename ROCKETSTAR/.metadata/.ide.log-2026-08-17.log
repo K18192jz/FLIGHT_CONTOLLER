@@ -1,0 +1,23 @@
+2026-08-17 22:15:48,388 [INFO] Activator:177 - 
+
+
+2026-08-17 22:15:48,394 [INFO] Activator:178 - !SESSION log4j initialized
+2026-08-17 22:15:52,835 [INFO] LogOutputStream:77 - [STDOUT_REDIRECT] 
+2026-08-17 22:34:17,886 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.UnknownHostException: stmicroelectronics.d3.sc.omtrdc.net
+2026-08-17 22:34:17,888 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.UnknownHostException: stmicroelectronics.d3.sc.omtrdc.net
+2026-08-17 22:34:17,889 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.UnknownHostException: stmicroelectronics.d3.sc.omtrdc.net
+2026-08-17 22:34:17,891 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.UnknownHostException: stmicroelectronics.d3.sc.omtrdc.net
+2026-08-17 22:34:17,891 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.UnknownHostException: stmicroelectronics.d3.sc.omtrdc.net
+2026-08-17 22:34:17,953 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.UnknownHostException: stmicroelectronics.d3.sc.omtrdc.net
+2026-08-17 22:34:17,954 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.UnknownHostException: stmicroelectronics.d3.sc.omtrdc.net
+2026-08-17 22:34:17,954 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.UnknownHostException: stmicroelectronics.d3.sc.omtrdc.net
+2026-08-17 22:34:17,954 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.UnknownHostException: stmicroelectronics.d3.sc.omtrdc.net
+2026-08-17 22:34:17,955 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.UnknownHostException: stmicroelectronics.d3.sc.omtrdc.net
+2026-08-17 22:35:57,665 [INFO] Activator:177 - 
+
+
+2026-08-17 22:35:57,670 [INFO] Activator:178 - !SESSION log4j initialized
+2026-08-17 22:36:11,396 [INFO] LogOutputStream:77 - [STDOUT_REDIRECT] 
+2026-08-17 22:36:23,587 [ERROR] ConfigurationRetriever:142 - IOException on connection: Read timed out
+2026-08-17 22:36:42,669 [ERROR] ConfigurationRetriever:142 - IOException on connection: Connect timed out
+2026-08-17 22:37:08,980 [ERROR] ConfigurationRetriever:142 - IOException on connection: Connect timed out
