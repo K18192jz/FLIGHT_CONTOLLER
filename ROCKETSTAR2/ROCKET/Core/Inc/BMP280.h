@@ -2,13 +2,13 @@
  * BMP280.h
  *
  * BMP280 pressure/temperature sensor driver - SPI (4-wire), STM32F411 + HAL
- * Specifically configured for SPI2 and PC15 Chip Select (CS)
+ * Specifically configured for SPI2 and PA7 Chip Select (CS)
  *
  * Wiring for STM32F411:
  *   SCK  -> PB13 (SPI2_SCK) or PB10
  *   SDI  -> PB15 (SPI2_MOSI)
  *   SDO  -> PB14 (SPI2_MISO)
- *   CSB  -> PC15 (GPIO CS, active LOW)
+ *   CSB  -> PA7  (GPIO CS, active LOW)
  */
 
 #ifndef BMP280_SPI_H
@@ -117,7 +117,7 @@ typedef struct {
 
 /* ---- API Functions ------------------------------------------------------- */
 
-/* Attache l'instance SPI2 et le Pin CS (ex: GPIOC, GPIO_PIN_15) */
+/* Attache l'instance SPI2 et le Pin CS (ex: GPIOA, GPIO_PIN_7) */
 void BMP280_Attach(BMP280_t *dev, SPI_HandleTypeDef *hspi,
                     GPIO_TypeDef *cs_port, uint16_t cs_pin);
 

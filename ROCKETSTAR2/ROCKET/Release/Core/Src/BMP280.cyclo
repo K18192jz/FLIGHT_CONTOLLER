@@ -1,0 +1,13 @@
+../Core/Src/BMP280.c:24:17:BMP280_ReadRegs	3
+../Core/Src/BMP280.c:43:17:BMP280_WriteReg	2
+../Core/Src/BMP280.c:62:6:BMP280_Attach	1
+../Core/Src/BMP280.c:72:17:BMP280_ReadChipId	1
+../Core/Src/BMP280.c:77:17:BMP280_SoftReset	2
+../Core/Src/BMP280.c:108:17:BMP280_Init	6
+../Core/Src/BMP280.c:139:17:BMP280_TriggerForcedMeasurement	2
+../Core/Src/BMP280.c:149:17:BMP280_WaitMeasuring	4
+../Core/Src/BMP280.c:168:17:BMP280_ReadRaw	2
+../Core/Src/BMP280.c:218:17:BMP280_ReadCompensated	3
+../Core/Src/BMP280.c:232:17:BMP280_ReadFloat	2
+../Core/Src/BMP280.c:247:7:BMP280_CalculateAltitude	3
+../Core/Src/BMP280.c:255:17:BMP280_ReadAltitude	2

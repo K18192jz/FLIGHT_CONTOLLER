@@ -1,0 +1,16 @@
+../Core/Src/sdcard.c:5:13:SDCARD_Select	1
+../Core/Src/sdcard.c:24:16:SDCARD_ReadR1	2
+../Core/Src/sdcard.c:43:12:SDCARD_WaitDataToken.constprop	3
+../Core/Src/sdcard.c:58:12:SDCARD_ReadBytes.isra	2
+../Core/Src/sdcard.c:70:12:SDCARD_WaitNotBusy	2
+../Core/Src/sdcard.c:9:6:SDCARD_Unselect	1
+../Core/Src/sdcard.c:81:5:SDCARD_Init	11
+../Core/Src/sdcard.c:244:5:SDCARD_GetBlocksNumber	4
+../Core/Src/sdcard.c:300:5:SDCARD_ReadSingleBlock	3
+../Core/Src/sdcard.c:346:5:SDCARD_WriteSingleBlock	3
+../Core/Src/sdcard.c:399:5:SDCARD_ReadBegin	2
+../Core/Src/sdcard.c:427:5:SDCARD_ReadData	2
+../Core/Src/sdcard.c:451:5:SDCARD_ReadEnd	2
+../Core/Src/sdcard.c:480:5:SDCARD_WriteBegin	2
+../Core/Src/sdcard.c:508:5:SDCARD_WriteData	2
+../Core/Src/sdcard.c:540:5:SDCARD_WriteEnd	1

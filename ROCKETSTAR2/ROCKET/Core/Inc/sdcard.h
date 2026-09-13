@@ -5,8 +5,8 @@
 #include "stm32f4xx.h"
 
 #define SDCARD_SPI_PORT      hspi2
-#define SDCARD_CS_Pin        GPIO_PIN_14
-#define SDCARD_CS_GPIO_Port  GPIOC
+#define SDCARD_CS_Pin        GPIO_PIN_4
+#define SDCARD_CS_GPIO_Port  GPIOA
 
 extern SPI_HandleTypeDef SDCARD_SPI_PORT;
 

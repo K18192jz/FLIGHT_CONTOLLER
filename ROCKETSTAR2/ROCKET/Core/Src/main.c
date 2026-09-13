@@ -16,7 +16,6 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
-
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "usb_device.h"
@@ -27,35 +26,33 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
-#include <math.h>
-#include <stdlib.h>
 
 #include "MPU9250.h"
 #include "BMP280.h"
 #include "sdcard.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi2;
 
 /* USER CODE BEGIN PV */
-MPU9250_t MPU9250;
-static BMP280_t bmp280;
 
-/* Buffer de test pour la carte SD (bloc de 512 octets) */
-uint8_t sd_buffer[512];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -63,10 +60,15 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_SPI2_Init(void);
 /* USER CODE BEGIN PFP */
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+MPU9250_t MPU9250;
+static BMP280_t bmp280;
+
 void USB_Print(const char* str)
 {
     CDC_Transmit_FS((uint8_t*)str, strlen(str));
@@ -81,6 +83,7 @@ void USB_Printf(const char* format, ...)
     va_end(args);
     CDC_Transmit_FS((uint8_t*)buf, strlen(buf));
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -89,13 +92,16 @@ void USB_Printf(const char* format, ...)
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
+
   MPU9250.settings.gFullScaleRange = GFSR_500DPS;
   MPU9250.settings.aFullScaleRange = AFSR_4G;
   MPU9250.settings.CS_PIN = GPIO_PIN_12;
   MPU9250.settings.CS_PORT = GPIOB;
   MPU9250.attitude.tau = 0.98;
   MPU9250.attitude.dt = 0.004;
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -104,62 +110,104 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+
   /* USER CODE END Init */
 
   /* Configure the system clock */
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
+
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_SPI2_Init();
   MX_USB_DEVICE_Init();
-
   /* USER CODE BEGIN 2 */
+
   HAL_Delay(1000);
 
-  /* Désactiver le CS de la Carte SD avant d'initialiser d'autres cartes SPI */
-  SDCARD_Unselect();
-
-  /* 1. Initialisation MPU9250 */
   if (MPU_begin(&hspi2, &MPU9250) != 1)
   {
-      USB_Printf("MPU9250 init failed!\r\n");
-  } else {
-      USB_Printf("MPU9250 ready\r\n");
+      USB_Printf("ERROR\n\r");
   }
 
-  /* 2. Initialisation BMP280 */
-  BMP280_Attach(&bmp280, &hspi2, GPIOC, GPIO_PIN_15);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, GPIO_PIN_RESET);
+
+  BMP280_Attach(&bmp280, &hspi2, GPIOA, GPIO_PIN_3);
   BMP280_Status_t st = BMP280_Init(&bmp280,
                                     BMP280_OSRS_X2,          /* temp oversampling */
                                     BMP280_OSRS_X16,         /* pressure oversampling */
-                                    BMP280_MODE_NORMAL,      /* free-running mode */
-                                    BMP280_STANDBY_62_5MS,   /* standby duration */
+                                    BMP280_MODE_NORMAL,      /* free-running */
+                                    BMP280_STANDBY_62_5MS,   /* time between samples */
                                     BMP280_FILTER_4);        /* IIR filter */
 
   if (st != BMP280_OK) {
       USB_Printf("BMP280 init failed, err=%d\r\n", (int)st);
-  } else {
-      USB_Printf("BMP280 ready\r\n");
   }
+
+  USB_Printf("BMP280 ready\r\n");
+
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, GPIO_PIN_SET);
 
   MPU_calibrateGyro(&hspi2, &MPU9250, 1500);
 
-  /* 3. Initialisation Carte SD */
-  int sd_res = SDCARD_Init();
-  if (sd_res == 0) {
-      uint32_t blocks = 0;
-      if (SDCARD_GetBlocksNumber(&blocks) == 0) {
-          USB_Printf("SD Card Init OK! Total blocks: %lu (Size: %lu MB)\r\n", blocks, (blocks / 2048));
-      } else {
-          USB_Printf("SD Card Init OK, but failed to read block count.\r\n");
-      }
-  } else {
-      USB_Printf("SD Card Init Failed, err=%d\r\n", sd_res);
+  /* --- Début Code SD Card --- */
+
+  // IMPORTANT : mettre CS à l'état haut AVANT toute autre init SPI
+  SDCARD_Unselect();
+
+  int ret = SDCARD_Init();
+  if (ret != 0) {
+      USB_Printf("SDCARD_Init failed: %d\r\n", ret);
+      Error_Handler();
   }
+  USB_Printf("SDCARD_Init OK\r\n");
+
+  // Lire le nombre de blocs de la carte
+  uint32_t numBlocks = 0;
+  if (SDCARD_GetBlocksNumber(&numBlocks) == 0) {
+      USB_Printf("Nombre de blocs : %lu (~%lu Mo)\r\n",
+                 (unsigned long)numBlocks,
+                 (unsigned long)(numBlocks / 2 / 1024));
+  } else {
+      USB_Printf("Erreur lecture CSD\r\n");
+  }
+
+  // Ecrire un bloc de test
+  uint8_t writeBuf[512];
+  memset(writeBuf, 0xAA, sizeof(writeBuf));
+  strcpy((char*)writeBuf, "Hello SD card!");
+
+  if (SDCARD_WriteSingleBlock(0, writeBuf) == 0) {
+      USB_Printf("Ecriture bloc 0 OK\r\n");
+  } else {
+      USB_Printf("Erreur ecriture bloc 0\r\n");
+  }
+
+  // Relire ce bloc pour vérifier
+  uint8_t readBuf[512] = {0};
+  if (SDCARD_ReadSingleBlock(0, readBuf) == 0) {
+      USB_Printf("Lecture bloc 0 OK : %s\r\n", (char*)readBuf);
+  } else {
+      USB_Printf("Erreur lecture bloc 0\r\n");
+  }
+
+  // Lecture multi-blocs (blocs 0 à 3)
+  uint8_t multiBuf[512];
+  if (SDCARD_ReadBegin(0) == 0) {
+      for (int i = 0; i < 4; i++) {
+          if (SDCARD_ReadData(multiBuf) != 0) {
+              USB_Printf("Erreur lecture multi-bloc %d\r\n", i);
+              break;
+          }
+          USB_Printf("Bloc %d lu, premier octet = 0x%02X\r\n", i, multiBuf[0]);
+      }
+      SDCARD_ReadEnd();
+  }
+
+  /* --- Fin Code SD Card --- */
 
   /* USER CODE END 2 */
 
@@ -169,36 +217,35 @@ int main(void)
   {
       HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
 
-      /* ---- Lecture MPU9250 ---- */
       MPU_calcAttitude(&hspi2, &MPU9250);
-      int16_t roll  = roundf(10 * MPU9250.attitude.r);
+      int16_t roll = roundf(10 * MPU9250.attitude.r);
+      uint8_t rollDecimal = abs(roll % 10);
       int16_t pitch = roundf(10 * MPU9250.attitude.p);
-      int16_t yaw   = roundf(10 * MPU9250.attitude.y);
+      uint8_t pitchDecimal = abs(pitch % 10);
+      int16_t yaw = roundf(10 * MPU9250.attitude.y);
+      uint8_t yawDecimal = abs(yaw % 10);
 
-      USB_Printf("Attitude: %d.%d, %d.%d, %d.%d\r\n",
-                 roll / 10, abs(roll % 10),
-                 pitch / 10, abs(pitch % 10),
-                 yaw / 10, abs(yaw % 10));
+      USB_Printf("%d.%d,%d.%d,%d.%d\n\r",roll/10, rollDecimal, pitch/10, pitchDecimal, yaw/10, yawDecimal);
 
-      /* ---- Lecture BMP280 (Température, Pression et Altitude) ---- */
-      float temp_c = 0.0f;
-      float press_hpa = 0.0f;
-      float alt_m = 0.0f;
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, GPIO_PIN_RESET);
 
-      if (BMP280_ReadAltitude(&bmp280, SEALEVEL_PRESSURE_HPA, &temp_c, &press_hpa, &alt_m) == BMP280_OK) {
-          int16_t temp_int  = (int16_t)(temp_c * 100.0f);
-          int32_t press_int = (int32_t)(press_hpa * 100.0f);
-          int16_t alt_int   = (int16_t)(alt_m * 10.0f);
+      int32_t t100;
+      uint32_t p256;
 
-          USB_Printf("T = %d.%02d C   P = %ld.%02ld hPa   Alt = %d.%d m\r\n",
-                     temp_int / 100, abs(temp_int % 100),
-                     press_int / 100, abs((int)(press_int % 100)),
-                     alt_int / 10, abs(alt_int % 10));
+      if (BMP280_ReadCompensated(&bmp280, &t100, &p256) == BMP280_OK) {
+          USB_Printf("T = %ld.%02ld C   P = %lu.%02lu hPa\r\n",
+                     t100 / 100, abs((int)(t100 % 100)),
+                     p256 / 256, ((p256 % 256) * 100) / 256);
       } else {
           USB_Printf("BMP280 read error\r\n");
       }
 
       HAL_Delay(1000);
+
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, GPIO_PIN_SET);
+
+      HAL_Delay(1000);
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -215,9 +262,14 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
+  /** Configure the main internal regulator output voltage
+  */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -231,6 +283,8 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -251,6 +305,15 @@ void SystemClock_Config(void)
   */
 static void MX_SPI2_Init(void)
 {
+
+  /* USER CODE BEGIN SPI2_Init 0 */
+
+  /* USER CODE END SPI2_Init 0 */
+
+  /* USER CODE BEGIN SPI2_Init 1 */
+
+  /* USER CODE END SPI2_Init 1 */
+  /* SPI2 parameter configuration*/
   hspi2.Instance = SPI2;
   hspi2.Init.Mode = SPI_MODE_MASTER;
   hspi2.Init.Direction = SPI_DIRECTION_2LINES;
@@ -267,6 +330,10 @@ static void MX_SPI2_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN SPI2_Init 2 */
+
+  /* USER CODE END SPI2_Init 2 */
+
 }
 
 /**
@@ -277,43 +344,92 @@ static void MX_SPI2_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
 
+  /* USER CODE END MX_GPIO_Init_1 */
+
+  /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /* Niveaux de sortie par défaut */
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET); /* BMP280 CS */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_SET); /* SD Card CS */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET); /* MPU9250 CS */
 
-  /* Configuration PC13 (LED), PC14 (SD CS), PC15 (BMP280 CS) */
-  GPIO_InitStruct.Pin = GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /* Configuration PB12 (MPU9250 CS) */
+  /*Configure GPIO pin : PA3 (BMP280 CS) */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB12 */
   GPIO_InitStruct.Pin = GPIO_PIN_12;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA4 (SDCARD CS) */
+  GPIO_InitStruct.Pin = GPIO_PIN_4;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* USER CODE END MX_GPIO_Init_2 */
 }
 
+/* USER CODE BEGIN 4 */
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
 void Error_Handler(void)
 {
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
+  /* USER CODE END Error_Handler_Debug */
 }
-
 #ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
 }
-#endif
+#endif /* USE_FULL_ASSERT */
