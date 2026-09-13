@@ -30,6 +30,9 @@
 #include "MPU9250.h"
 #include "BMP280.h"
 #include "sdcard.h"
+#include "qmc5883p.h"
+#include "LoRa.h"
+#include "gps.h"
 
 /* USER CODE END Includes */
 
@@ -49,7 +52,11 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+
 SPI_HandleTypeDef hspi2;
+
+UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
@@ -59,6 +66,8 @@ SPI_HandleTypeDef hspi2;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_SPI2_Init(void);
+static void MX_I2C1_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -68,6 +77,11 @@ static void MX_SPI2_Init(void);
 
 MPU9250_t MPU9250;
 static BMP280_t bmp280;
+
+QMC5883P_HandleTypeDef qmc;
+volatile bool qmc_dataReady = false;
+
+LoRa myLora;
 
 void USB_Print(const char* str)
 {
@@ -124,6 +138,8 @@ int main(void)
   MX_GPIO_Init();
   MX_SPI2_Init();
   MX_USB_DEVICE_Init();
+  MX_I2C1_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
   HAL_Delay(1000);
@@ -209,6 +225,55 @@ int main(void)
 
   /* --- Fin Code SD Card --- */
 
+  /* --- Début Code QMC5883P --- */
+
+  if (!qmc5883p_init(&qmc, &hi2c1, QMC5883P_I2C_ADDR))
+  {
+      USB_Printf("QMC5883P init failed\r\n");
+      Error_Handler();
+  }
+  USB_Printf("QMC5883P ready\r\n");
+
+  /* Offsets/scales par defaut, a remplacer par les valeurs de calibration */
+  qmc5883p_set_offsets(&qmc, 0.0f, 0.0f, 0.0f);
+  qmc5883p_set_scales(&qmc, 1.0f, 1.0f, 1.0f);
+
+  /* --- Fin Code QMC5883P --- */
+
+  /* --- Début Code LoRa SX1278 (Ra-02) --- */
+
+  myLora = newLoRa();          // hSPIx est deja fixe sur hspi2 dans la bibliotheque
+
+  myLora.CS_port    = GPIOA;
+  myLora.CS_pin     = GPIO_PIN_7;   // NSS
+  myLora.reset_port = GPIOB;
+  myLora.reset_pin  = GPIO_PIN_0;   // RESET
+  myLora.DIO0_port  = GPIOA;
+  myLora.DIO0_pin   = GPIO_PIN_6;   // DIO0
+
+  // NSS doit etre au repos a l'etat haut (module non selectionne)
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, GPIO_PIN_SET);
+
+  LoRa_reset(&myLora);
+
+  uint16_t loraStatus = LoRa_init(&myLora);
+  if (loraStatus != LORA_OK)
+  {
+      USB_Printf("LoRa init failed: %d\r\n", loraStatus);
+      Error_Handler();
+  }
+  USB_Printf("LoRa ready\r\n");
+
+  LoRa_startReceiving(&myLora);
+
+  /* --- Fin Code LoRa SX1278 --- */
+
+  /* --- Debut Code GPS (USART1) --- */
+
+  GPS_Init();   // arme la reception 1 octet en IT sur huart1
+
+  /* --- Fin Code GPS --- */
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -245,6 +310,28 @@ int main(void)
       HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, GPIO_PIN_SET);
 
       HAL_Delay(1000);
+
+      if (qmc_dataReady)
+      {
+          qmc_dataReady = false;
+
+          float xyz[3];
+          if (qmc5883p_read_xyz(&qmc, xyz))
+          {
+              float heading = qmc5883p_get_heading(&qmc, 0.0f); /* 0.0f = declinaison locale */
+              USB_Printf("Mag X=%.2f Y=%.2f Z=%.2f  Heading=%.1f deg\r\n",
+                         xyz[0], xyz[1], xyz[2], heading);
+          }
+      }
+
+      /* --- Affichage GPS --- */
+      if (GPS.lock > 0) {
+          USB_Printf("GPS lat=%.6f lon=%.6f sat=%d hdop=%.1f\r\n",
+                     GPS.dec_latitude, GPS.dec_longitude,
+                     GPS.satelites, GPS.hdop);
+      } else {
+          USB_Printf("GPS: pas de fix\r\n");
+      }
 
     /* USER CODE END WHILE */
 
@@ -299,6 +386,40 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
   * @brief SPI2 Initialization Function
   * @param None
   * @retval None
@@ -337,6 +458,46 @@ static void MX_SPI2_Init(void)
 }
 
 /**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 9600;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* Necessaire pour que HAL_UART_Receive_IT (utilise par GPS_Init) fonctionne :
+   * si le fichier stm32f4xx_hal_msp.c (genere par CubeMX) active deja
+   * USART1_IRQn dans HAL_UART_MspInit(), ces deux lignes sont redondantes
+   * mais sans danger. */
+  HAL_NVIC_SetPriority(USART1_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(USART1_IRQn);
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -358,13 +519,13 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_7, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 
   /*Configure GPIO pin : PC13 */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
@@ -373,33 +534,52 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA3 (BMP280 CS) */
-  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  /*Configure GPIO pins : PA3 PA4 PA7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_7;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PB12 */
-  GPIO_InitStruct.Pin = GPIO_PIN_12;
+  /*Configure GPIO pins : PA5 PA6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_6;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB0 PB12 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_12;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA4 (SDCARD CS) */
-  GPIO_InitStruct.Pin = GPIO_PIN_4;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
   /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* EXTI interrupt init for PA5 (QMC5883P DRDY) */
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 2, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == GPIO_PIN_5) /* PA5 = QMC5883P DRDY */
+    {
+        qmc_dataReady = true;
+    }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        GPS_UART_CallBack();
+    }
+}
 
 /* USER CODE END 4 */
 

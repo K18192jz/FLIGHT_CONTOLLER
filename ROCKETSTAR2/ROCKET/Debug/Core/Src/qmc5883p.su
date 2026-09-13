@@ -1,0 +1,8 @@
+../Core/Src/qmc5883p.c:23:6:qmc5883p_init	32	static
+../Core/Src/qmc5883p.c:64:6:qmc5883p_read_reg	48	static
+../Core/Src/qmc5883p.c:80:6:qmc5883p_write_reg	32	static
+../Core/Src/qmc5883p.c:88:6:qmc5883p_read_raw	24	static
+../Core/Src/qmc5883p.c:107:6:qmc5883p_read_xyz	32	static
+../Core/Src/qmc5883p.c:125:7:qmc5883p_get_heading	32	static
+../Core/Src/qmc5883p.c:146:6:qmc5883p_set_offsets	24	static
+../Core/Src/qmc5883p.c:153:6:qmc5883p_set_scales	24	static
