@@ -1,2 +1,6 @@
-(sym_lib_table
+(fp_lib_table
+	(version 7)
+	(lib (name "capaciter") (type "KiCad") (uri "${KIPRJMOD}/capaciter.pretty") (options "") (descr ""))
+	(lib (name "CAPA") (type "KiCad") (uri "${KIPRJMOD}/capaciter.pretty/CAPA.pretty") (options "") (descr ""))
+	(lib (name "capacic") (type "KiCad") (uri "${KIPRJMOD}/capacic.pretty") (options "") (descr ""))
 )
